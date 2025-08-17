@@ -91,7 +91,7 @@ def edit_long_form_video(audio_files: list, visual_files: list, music_path: str,
                 background_clip = background_clip.resize(height=HEIGHT).crop(x_center=background_clip.w/2, width=WIDTH, height=HEIGHT)
             else:
                 print(f"  - UYARI: Sahne {i+1} için görsel bulunamadı, siyah ekran kullanılıyor.")
-                background_clip = ColorClip(size=(WIDTH, HEIGHT), color=(0, 0, 0), duration=audio_clip.duration)
+                background_clip = ColorClip(size=(WIDTH, HEIGHT), color=(0, 0, 0), duration=audio_clip.duration, fps=24)
             
             scene_clip = background_clip.set_audio(audio_clip)
             if scene_clip.duration is not None:
@@ -109,7 +109,17 @@ def edit_long_form_video(audio_files: list, visual_files: list, music_path: str,
         final_video.audio = CompositeAudioClip([final_video.audio, music_clip])
 
     try:
-        final_video.write_videofile(output_filename, fps=24, codec='libx264', audio_codec='aac')
+        # Write video with MoviePy 2.0.0.dev2 optimized settings
+        final_video.write_videofile(
+            output_filename, 
+            fps=24, 
+            codec='libx264',
+            audio_codec='aac', 
+            preset='ultrafast',
+            threads=2,
+            logger=None,
+            ffmpeg_params=['-crf', '28', '-pix_fmt', 'yuv420p']
+        )
         return output_filename
     except Exception as e:
         print(f"  - HATA: Video yazma sırasında hata: {e}")

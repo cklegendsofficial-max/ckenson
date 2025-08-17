@@ -51,6 +51,23 @@ except ImportError as e:
     print(f"⚠️ Some imports not available: {e}")
     IMPORTS_AVAILABLE = False
 
+# Try to import AI Integrated Suite
+try:
+    from ai_integrated_suite import AIIntegratedSuite, create_ai_suite, check_ai_dependencies
+    AI_SUITE_AVAILABLE = True
+    print("✅ AI Integrated Suite available for frontend")
+    
+    # Check AI Master Suite specifically
+    ai_deps = check_ai_dependencies()
+    if ai_deps.get('ai_master_suite', False):
+        print("🚀 AI Master Suite available for frontend - Premium features enabled")
+    else:
+        print("⚠️ AI Master Suite not available for frontend - Using standard features")
+        
+except ImportError as e:
+    AI_SUITE_AVAILABLE = False
+    print(f"⚠️ AI Integrated Suite not available for frontend: {e}")
+
 class VideoPipelineGUI:
     """Advanced GUI for Video Pipeline Management"""
     
@@ -395,6 +412,37 @@ class VideoPipelineGUI:
                 self.log_message("✅ Pipeline components initialized successfully", "SYSTEM")
             else:
                 self.log_message("⚠️ Some pipeline components not available", "WARNING")
+            
+            # Initialize AI Integrated Suite if available
+            if AI_SUITE_AVAILABLE:
+                try:
+                    self.ai_suite = create_ai_suite()
+                    self.log_message("✅ AI Integrated Suite initialized successfully", "AI")
+                    
+                    # Get AI system status
+                    ai_status = self.ai_suite.get_system_status()
+                    available_modules = ai_status.get('system_health', {}).get('available_modules', 0)
+                    total_modules = ai_status.get('system_health', {}).get('total_modules', 0)
+                    
+                    self.log_message(f"🤖 AI Suite Status: {available_modules}/{total_modules} modules available", "AI")
+                    
+                    # Check AI dependencies
+                    ai_deps = check_ai_dependencies()
+                    self.log_message(f"📊 AI Dependencies: {ai_deps}", "AI")
+                    
+                    # Check AI Master Suite specifically
+                    if ai_deps.get('ai_master_suite', False):
+                        self.log_message("🚀 AI Master Suite available - Premium features enabled", "AI")
+                    else:
+                        self.log_message("⚠️ AI Master Suite not available - Using standard features", "AI")
+                    
+                except Exception as e:
+                    self.log_message(f"❌ AI Suite initialization failed: {e}", "ERROR")
+                    self.ai_suite = None
+            else:
+                self.log_message("⚠️ AI Integrated Suite not available", "WARNING")
+                self.ai_suite = None
+                
         except Exception as e:
             self.log_message(f"❌ Pipeline initialization failed: {e}", "ERROR")
     
@@ -511,31 +559,129 @@ class VideoPipelineGUI:
             self.queue_progress_update('button_state', button_name='pause', state='disabled')
     
     def process_channel(self, channel_name: str, channel_index: int, total_channels: int) -> bool:
-        """Process a single channel with progress updates"""
+        """
+        REAL PIPELINE: Simülasyon yerine gerçek üretimi çalıştırır.
+        Fikir -> Senaryo -> TTS -> Görseller -> Render
+        """
+        if not getattr(self, "is_running", True):
+            return False
+
+        # Zorunlu bileşen kontrolü
+        if not hasattr(self, "video_creator") or not hasattr(self, "llm_handler"):
+            self.log_message("❌ Pipeline components missing (video_creator / llm_handler)", "ERROR")
+            return False
+
         try:
-            # Simulate different processing stages
-            stages = [
-                ("Generating ideas", 20),
-                ("Creating script", 40),
-                ("Generating voiceover", 60),
-                ("Finding visual assets", 80),
-                ("Creating final video", 100)
-            ]
-            
-            for stage_name, progress in stages:
-                if not self.is_running:
-                    return False
-                
-                self.log_message(f"🎬 {channel_name}: {stage_name}", "PROCESSING")
-                self.update_channel_progress(channel_name, progress, f"🔄 {stage_name}", "Processing")
-                
-                # Simulate processing time
-                time.sleep(3)
-            
-            return True
-            
+            # Kanal yapılandırması
+            try:
+                from config import CHANNELS_CONFIG
+                cfg = CHANNELS_CONFIG.get(channel_name, {})
+                niche = cfg.get("niche", "general")
+            except Exception:
+                niche = "general"
+
+            # Check if AI Suite is available for enhanced processing
+            if hasattr(self, 'ai_suite') and self.ai_suite:
+                self.log_message(f"🤖 Using AI Integrated Suite for {channel_name}", "AI")
+                return self._run_ai_enhanced_pipeline(channel_name, niche, cfg)
+            else:
+                self.log_message(f"🔄 Using standard pipeline for {channel_name}", "PIPELINE")
+                return self._run_standard_pipeline(channel_name, niche, cfg)
+
         except Exception as e:
-            self.log_message(f"❌ Channel {channel_name} processing failed: {e}", "ERROR")
+            self.log_message(f"❌ {channel_name} failed: {e}", "ERROR")
+            return False
+    
+    def _run_ai_enhanced_pipeline(self, channel_name: str, niche: str, cfg: Dict) -> bool:
+        """Run AI-enhanced pipeline using AI Integrated Suite"""
+        try:
+            self.log_message(f"🚀 Starting AI-enhanced pipeline for {channel_name}", "AI")
+            
+            # Run full AI pipeline
+            ai_results = self.ai_suite.run_full_pipeline(
+                channel_name=channel_name,
+                niche=niche,
+                target_duration=cfg.get("target_duration_minutes", 15)
+            )
+            
+            if ai_results.get("success"):
+                self.log_message(f"✅ AI pipeline completed successfully for {channel_name}", "AI")
+                
+                # Extract video output path
+                video_result = ai_results.get("video", {})
+                if video_result.get("success"):
+                    output_path = video_result.get("output_path", "")
+                    if output_path and os.path.exists(output_path):
+                        self.log_message(f"🎬 AI-generated video: {output_path}", "SUCCESS")
+                        return True
+                
+                self.log_message(f"⚠️ AI pipeline completed but no video output found", "WARNING")
+                return False
+            else:
+                self.log_message(f"❌ AI pipeline failed for {channel_name}: {ai_results.get('error')}", "ERROR")
+                return False
+                
+        except Exception as e:
+            self.log_message(f"❌ AI-enhanced pipeline failed: {e}", "ERROR")
+            return False
+    
+    def _run_standard_pipeline(self, channel_name: str, niche: str, cfg: Dict) -> bool:
+        """Run standard content creation pipeline"""
+        try:
+            self.log_message(f"🔄 Running standard pipeline for {channel_name}", "PIPELINE")
+            
+            # 10% – Fikir
+            self.update_channel_progress(channel_name, 10, "Generating ideas", "Processing")
+            self.log_message(f"🧠 {channel_name}: Generating ideas", "PROCESSING")
+            ideas = self.llm_handler.generate_viral_ideas(channel_name, 1) or []
+            idea = ideas[0] if ideas else f"{channel_name} documentary"
+
+            # 25% – Senaryo
+            self.update_channel_progress(channel_name, 25, "Writing script", "Processing")
+            self.log_message(f"✍️  {channel_name}: Writing script", "PROCESSING")
+            script = self.llm_handler.write_script(idea, channel_name)
+            script = self.video_creator.enhance_script_with_metadata(script)
+
+            # 45% – Seslendirme
+            self.update_channel_progress(channel_name, 45, "Generating voiceover", "Processing")
+            self.log_message(f"🎙️  {channel_name}: Generating voiceover", "PROCESSING")
+            audio_dir = os.path.join("assets", "audio", channel_name)
+            os.makedirs(audio_dir, exist_ok=True)
+            audio_files = self.video_creator.generate_voiceover(script, audio_dir)
+            if not audio_files:
+                raise RuntimeError("Voiceover generation returned empty list")
+
+            # 65% – Görseller
+            self.update_channel_progress(channel_name, 65, "Finding visual assets", "Processing")
+            self.log_message(f"🎞️  {channel_name}: Finding visual assets (niche={niche})", "PROCESSING")
+            downloads_dir = os.path.join("assets", "videos", "downloads", channel_name)
+            os.makedirs(downloads_dir, exist_ok=True)
+            visuals = self.video_creator.find_visual_assets(script, niche, downloads_dir)
+            if not visuals:
+                raise RuntimeError("No visuals found (check PEXELS_API_KEY or put local mp4s into assets/videos/downloads)")
+
+            # 85% – Render
+            self.update_channel_progress(channel_name, 85, "Rendering video", "Processing")
+            self.log_message(f"🎬 {channel_name}: Rendering final video", "PROCESSING")
+            videos_dir = os.path.join("assets", "videos")
+            os.makedirs(videos_dir, exist_ok=True)
+            out_path = os.path.join(videos_dir, f"{channel_name}_Masterpiece_v2.mp4")
+
+            # Müzik (varsa kullan)
+            music_path = os.path.join("assets", "audio", "music", "epic_music.mp3")
+            music = music_path if os.path.exists(music_path) else None
+
+            final_path = self.video_creator.edit_long_form_video(audio_files, visuals, music, out_path)
+            if not final_path or not os.path.exists(final_path):
+                raise RuntimeError("Render failed (no output file)")
+
+            # 100% – Tamam
+            self.update_channel_progress(channel_name, 100, "✅ Completed", "Completed")
+            self.log_message(f"🎉 Created: {final_path}", "SUCCESS")
+            return True
+
+        except Exception as e:
+            self.log_message(f"❌ Standard pipeline failed for {channel_name}: {e}", "ERROR")
             return False
     
     def update_channel_progress(self, channel_name: str, progress: int, status_text: str, status: str):

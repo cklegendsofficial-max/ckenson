@@ -1,23 +1,42 @@
 # Enhanced Master Director - Video Pipeline Dependencies
-
+# -------------------------------------------------------
 # Core dependencies
-tkinter  # Usually comes with Python
-Pillow>=9.0.0  # For image processing and video frame display
-numpy>=1.21.0  # For numerical operations and video analysis
+Pillow>=9.0.0,<12.0.0    # Image processing and frame handling
+numpy>=1.21.0,<3.0.0     # Numerical operations
 
 # Video processing
-moviepy>=1.0.3  # For video analysis and frame extraction
+moviepy>=1.0.3,<2.0.0    # Video creation and editing
+ffmpeg-python>=0.2.0,<1.0.0  # FFmpeg wrapper
 
-# AI/LLM integration
-ollama>=0.1.0  # For AI-powered script regeneration
+# AI / LLM Integration
+ollama>=0.1.0,<1.0.0     # Local LLM API client
+openai-whisper>=20231117,<20240000  # Speech-to-text (optional)
+torch>=2.0.0,<3.0.0      # PyTorch for AI models (optional)
+transformers>=4.30.0,<5.0.0  # Hugging Face models (optional)
+sentencepiece>=0.1.99,<1.0.0 # Tokenizer for certain models (optional)
 
-# Configuration and environment
-python-dotenv>=1.0.0  # For environment variable management
-requests>=2.25.0  # For HTTP requests and API calls
+# Audio processing
+librosa>=0.10.0,<1.0.0   # Audio analysis (optional)
+soundfile>=0.12.1,<1.0.0 # Read/write audio files (optional)
+soxr>=0.3.2,<1.0.0       # High-quality audio resampling (optional)
 
-# Optional dependencies
-schedule>=1.1.0  # For automated scheduling
-pyautogui>=0.9.53  # For automation features
+# Text-to-Speech
+gtts>=2.3.0,<3.0.0       # Google Text-to-Speech (fallback)
+espeak-ng>=0.1.0,<1.0.0  # Local TTS (optional)
 
-# Development dependencies
-PyInstaller>=5.0  # For building executables
+# Config & HTTP
+python-dotenv>=1.0.0,<2.0.0  # Environment variable management
+requests>=2.25.0,<3.0.0      # HTTP requests
+
+# Performance Optimization
+psutil>=5.9.0,<6.0.0         # System monitoring and optimization
+schedule>=1.2.0,<2.0.0       # Task scheduling
+concurrent-futures>=3.1.1,<4.0.0  # Parallel processing (Python 3.2+)
+
+# Utilities
+more-itertools>=9.0.0,<11.0.0
+tqdm>=4.65.0,<5.0.0          # Progress bars
+regex>=2023.12.25,<2026.0.0  # Advanced regex
+
+# Development / Build (optional)
+# PyInstaller>=6.10.0,<7.0.0   # Build to .exe

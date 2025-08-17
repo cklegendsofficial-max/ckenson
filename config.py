@@ -1,13 +1,30 @@
-# config_new.py - Enhanced Configuration with Environment Variables and Validation
+# config.py - Enhanced Configuration with Environment Variables and Validation
 
 import os
 import json
 import time
 from typing import Dict, List, Any, Optional
-from dotenv import load_dotenv
 
 # Load environment variables from .env file
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv(override=True)
+    print("✅ .env file loaded successfully")
+except Exception as e:
+    print(f"⚠️ Failed to load .env: {e}")
+
+# Get Pexels API key from environment or use fallback
+PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "SkEG6SqXRKE6OzoUVqlA...")
+if PEXELS_API_KEY:
+    print(f"✅ Pexels API key loaded: {PEXELS_API_KEY[:20]}...")
+else:
+    print("❌ Pexels API key not found")
+
+# AI Configuration
+AI_CONFIG = {
+    "ollama_base_url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+    "ollama_model": os.getenv("OLLAMA_MODEL", "llama3:8b"),
+}
 
 # === Multi-Channel niche normalization & rich seeds ===
 
@@ -165,7 +182,6 @@ def get_env_var(key: str, default: Any = None, required: bool = False) -> Any:
         return value
 
 # API Keys from environment variables
-PEXELS_API_KEY = get_env_var("PEXELS_API_KEY", None, required=False)
 ELEVENLABS_API_KEY = get_env_var("ELEVENLABS_API_KEY", None, required=False)
 ELEVENLABS_VOICE_ID = get_env_var("ELEVENLABS_VOICE_ID", None, required=False)
 OLLAMA_BASE_URL = get_env_var("OLLAMA_BASE_URL", "http://localhost:11434", required=False)
@@ -203,13 +219,61 @@ CHANNELS_CONFIG = {
         "engagement_strategy": "emotional_peaks",
         "subtitle_languages": ["English", "Spanish", "French", "German"],
         "quality_threshold": 0.85
+    },
+    "CKFinanceCore": {
+        "name": "CKFinanceCore",
+        "niche": "finance",
+        "niche_keywords": ["finance", "investing", "money", "economics", "trading", "wealth"],
+        "pexels_api_key": PEXELS_API_KEY,
+        "self_improvement": True,
+        "self_update": True,
+        "target_duration_minutes": 15,
+        "style_preference": "professional",
+        "narrator_style": "warren_buffett",
+        "music_style": "corporate_ambient",
+        "visual_style": "modern_finance",
+        "engagement_strategy": "data_insights",
+        "subtitle_languages": ["English", "Spanish", "French", "German"],
+        "quality_threshold": 0.8
+    },
+    "CKDrive": {
+        "name": "CKDrive",
+        "niche": "automotive",
+        "niche_keywords": ["cars", "automotive", "vehicles", "driving", "motorsport", "engineering"],
+        "pexels_api_key": PEXELS_API_KEY,
+        "self_improvement": True,
+        "self_update": True,
+        "target_duration_minutes": 12,
+        "style_preference": "dynamic",
+        "narrator_style": "jeremy_clarkson",
+        "music_style": "high_energy",
+        "visual_style": "automotive_glamour",
+        "engagement_strategy": "speed_thrills",
+        "subtitle_languages": ["English", "Spanish", "French", "German"],
+        "quality_threshold": 0.8
+    },
+    "CKCombat": {
+        "name": "CKCombat",
+        "niche": "combat",
+        "niche_keywords": ["martial arts", "fighting", "combat", "self defense", "sports", "training"],
+        "pexels_api_key": PEXELS_API_KEY,
+        "self_improvement": True,
+        "self_update": True,
+        "target_duration_minutes": 10,
+        "style_preference": "intense",
+        "narrator_style": "bruce_lee",
+        "music_style": "epic_action",
+        "visual_style": "combat_dynamic",
+        "engagement_strategy": "adrenaline_rush",
+        "subtitle_languages": ["English", "Spanish", "French", "German"],
+        "quality_threshold": 0.8
     }
 }
 
 # Normalize channel keys (trim): avoid accidental whitespace/case drifts
 CHANNELS_CONFIG = {k.strip(): v for k, v in CHANNELS_CONFIG.items()}
 
-# AI Configuration with validation
+# AI Configuration with enhanced validation
 AI_CONFIG = {
     "ollama_model": get_env_var("OLLAMA_MODEL", "llama3:8b", required=False),
     "ollama_base_url": OLLAMA_BASE_URL,
@@ -219,7 +283,63 @@ AI_CONFIG = {
     "quality_analysis_enabled": True,
     "learning_rate": 0.1,
     "max_iterations": 5,
-    "improvement_threshold": 0.1
+    "improvement_threshold": 0.1,
+    # Enhanced AI module configuration
+    "ai_modules": {
+        "cinematic_director": {
+            "enabled": True,
+            "priority": "high",
+            "fallback_enabled": True
+        },
+        "voice_acting": {
+            "enabled": True,
+            "priority": "high",
+            "fallback_enabled": True
+        },
+        "visual_suite": {
+            "enabled": True,
+            "priority": "medium",
+            "fallback_enabled": True
+        },
+        "audio_suite": {
+            "enabled": True,
+            "priority": "medium",
+            "fallback_enabled": True
+        },
+        "content_suite": {
+            "enabled": True,
+            "priority": "high",
+            "fallback_enabled": True
+        },
+        "video_suite": {
+            "enabled": True,
+            "priority": "high",
+            "fallback_enabled": True
+        },
+        "analytics_suite": {
+            "enabled": True,
+            "priority": "low",
+            "fallback_enabled": True
+        },
+        "realtime_director": {
+            "enabled": True,
+            "priority": "low",
+            "fallback_enabled": True
+        },
+        "master_suite": {
+            "enabled": True,
+            "priority": "highest",
+            "fallback_enabled": True,
+            "premium_features": True
+        }
+    },
+    # AI pipeline configuration
+    "pipeline": {
+        "max_parallel_channels": 3,
+        "quality_threshold": 0.8,
+        "retry_attempts": 2,
+        "fallback_strategy": "graceful_degradation"
+    }
 }
 
 # Quality Standards with validation
@@ -249,7 +369,7 @@ PEXELS_CONFIG = {
         "requests_per_hour": 200,
         "requests_per_day": 5000
     },
-    "enabled": PEXELS_API_KEY is not None
+    "enabled": True
 }
 
 # Self-Update Configuration with validation
@@ -270,6 +390,81 @@ SELF_UPDATE_CONFIG = {
         "enhance_narration_style",
         "optimize_music_selection"
     ]
+}
+
+# GPU Configuration for Local Optimization
+GPU_CONFIG = {
+    "enabled": True,
+    "device_id": 0,
+    "memory_fraction": 0.8,
+    "compute_capability": "7.5",  # MX450 supports CUDA 7.5
+    "auto_memory_management": True,
+    "mixed_precision": True,  # FP16 for better performance
+}
+
+# Hardware Optimization Settings
+HARDWARE_OPTIMIZATION = {
+    "max_threads": 8,  # CPU thread optimization
+    "use_gpu_encoding": True,  # NVIDIA GPU encoding
+    "use_gpu_decoding": True,  # NVIDIA GPU decoding
+    "memory_optimization": True,
+    "cache_optimization": True,
+}
+
+# Storage Optimization for Local Usage
+STORAGE_OPTIMIZATION = {
+    "use_ramdisk": True,           # Use RAM disk for temporary files
+    "temp_dir": "/tmp/chimera",    # Temporary directory
+    "cache_size": "4GB",           # Cache size limit
+    "auto_cleanup": True,          # Automatic cleanup
+    "deduplication": True,         # File deduplication
+    "compression": True,           # File compression
+    "batch_operations": True,      # Batch file operations
+    "parallel_io": True,           # Parallel I/O operations
+}
+
+# File Management Settings
+FILE_MANAGEMENT = {
+    "max_temp_files": 1000,        # Maximum temporary files
+    "cleanup_interval": 3600,      # Cleanup interval (seconds)
+    "file_retention": 86400,       # File retention (seconds)
+    "compression_ratio": 0.7,      # Target compression ratio
+    "dedupe_threshold": 0.95,      # Deduplication similarity threshold
+}
+
+# Memory Management Configuration
+MEMORY_CONFIG = {
+    "gpu_memory_limit_gb": 2.0,           # GPU memory limit in GB
+    "cpu_fallback_threshold": 1.0,        # Use CPU if GPU memory below this threshold
+    "sequential_initialization": True,     # Initialize modules sequentially
+    "memory_cleanup_interval": 5,         # Cleanup memory every N operations
+    "max_concurrent_models": 2,           # Maximum concurrent AI models
+    "auto_memory_management": True,       # Automatic memory management
+    "force_cpu_mode": False,              # Force CPU mode for all operations
+    "memory_monitoring": True,            # Enable memory monitoring
+    "cleanup_on_error": True,             # Cleanup memory on errors
+}
+
+# AI Model Configuration with Memory Management
+AI_MODEL_CONFIG = {
+    "sentiment_analysis": {
+        "model": "distilbert-base-uncased-finetuned-sst-2-english",
+        "fallback_model": "cardiffnlp/twitter-roberta-base-sentiment-latest",
+        "device_preference": "auto",      # auto, gpu, cpu
+        "memory_efficient": True,
+        "batch_size": 1
+    },
+    "text_generation": {
+        "model": "gpt2",
+        "device_preference": "auto",
+        "memory_efficient": True,
+        "max_length": 512
+    },
+    "image_processing": {
+        "device_preference": "auto",
+        "memory_efficient": True,
+        "max_image_size": (1024, 1024)
+    }
 }
 
 # Validate configurations
@@ -295,8 +490,10 @@ if not PEXELS_API_KEY:
 if not ELEVENLABS_API_KEY:
     print("⚠️ ELEVENLABS_API_KEY not found - ElevenLabs features will be disabled")
 
+# Ollama URL status (only show once)
 if not OLLAMA_BASE_URL or OLLAMA_BASE_URL == "http://localhost:11434":
-    print("ℹ️ Using default Ollama URL: http://localhost:11434")
+    # Only show this message once during startup
+    pass
 
 print(f"✅ Configuration loaded successfully")
 print(f"   Pexels enabled: {PEXELS_CONFIG['enabled']}")
@@ -320,3 +517,98 @@ __all__ = [
     'MAX_TOPICS',
     'SEED_TOPICS'
 ]
+
+class StorageManager:
+    """Advanced storage management for local optimization"""
+    
+    def __init__(self):
+        self.temp_dir = STORAGE_OPTIMIZATION["temp_dir"]
+        self.cache_size = self._parse_size(STORAGE_OPTIMIZATION["cache_size"])
+        self.auto_cleanup = STORAGE_OPTIMIZATION["auto_cleanup"]
+        self.deduplication = STORAGE_OPTIMIZATION["deduplication"]
+        self.compression = STORAGE_OPTIMIZATION["compression"]
+        
+        # Initialize storage
+        self._setup_storage()
+        self._start_cleanup_thread()
+    
+    def _parse_size(self, size_str: str) -> int:
+        """Parse size string to bytes"""
+        size_str = size_str.upper()
+        if size_str.endswith('GB'):
+            return int(float(size_str[:-2]) * 1024**3)
+        elif size_str.endswith('MB'):
+            return int(float(size_str[:-2]) * 1024**2)
+        elif size_str.endswith('KB'):
+            return int(float(size_str[:-2]) * 1024)
+        else:
+            return int(size_str)
+    
+    def _setup_storage(self):
+        """Setup optimized storage structure"""
+        try:
+            import os
+            import tempfile
+            
+            # Create temp directory
+            os.makedirs(self.temp_dir, exist_ok=True)
+            
+            # Set optimal permissions
+            os.chmod(self.temp_dir, 0o755)
+            
+            print(f"✅ Storage initialized: {self.temp_dir}")
+            
+        except Exception as e:
+            print(f"⚠️ Storage setup failed: {e}")
+    
+    def _start_cleanup_thread(self):
+        """Start automatic cleanup thread"""
+        if self.auto_cleanup:
+            import threading
+            import time
+            
+            def cleanup_worker():
+                while True:
+                    try:
+                        self._cleanup_temp_files()
+                        time.sleep(FILE_MANAGEMENT["cleanup_interval"])
+                    except Exception as e:
+                        print(f"⚠️ Cleanup worker error: {e}")
+                        time.sleep(60)  # Wait 1 minute on error
+            
+            cleanup_thread = threading.Thread(target=cleanup_worker, daemon=True)
+            cleanup_thread.start()
+            print("✅ Auto-cleanup thread started")
+    
+    def _cleanup_temp_files(self):
+        """Clean up temporary files"""
+        try:
+            import os
+            import time
+            
+            current_time = time.time()
+            retention_time = FILE_MANAGEMENT["file_retention"]
+            
+            for filename in os.listdir(self.temp_dir):
+                filepath = os.path.join(self.temp_dir, filename)
+                if os.path.isfile(filepath):
+                    file_age = current_time - os.path.getmtime(filepath)
+                    if file_age > retention_time:
+                        os.remove(filepath)
+                        print(f"🧹 Cleaned up old file: {filename}")
+            
+        except Exception as e:
+            print(f"⚠️ Cleanup failed: {e}")
+    
+    def get_temp_path(self, filename: str) -> str:
+        """Get optimized temporary file path"""
+        return os.path.join(self.temp_dir, filename)
+    
+    def optimize_file_operations(self, file_paths: list):
+        """Optimize batch file operations"""
+        if STORAGE_OPTIMIZATION["batch_operations"]:
+            # Implement batch optimization
+            pass
+
+# Initialize storage manager
+storage_manager = StorageManager()

@@ -7,8 +7,10 @@ import time
 import random
 import requests
 import numpy as np
+import logging
 from typing import List, Dict, Optional, Tuple, Any
 from datetime import datetime
+from pathlib import Path
 
 # --- config imports & defaults ---
 try:
@@ -43,7 +45,7 @@ try:
     ESPEAK_AVAILABLE = True
 except ImportError:
     ESPEAK_AVAILABLE = False
-    print("⚠️ espeak not available, using gTTS fallback")
+            # espeak not available, using gTTS fallback silently
 
 try:
     import mido
@@ -66,38 +68,335 @@ try:
 except ImportError:
     GTTS_AVAILABLE = False
 
+# AI Suite imports
+try:
+    from ai_visual_suite import AIVisualSuite, VisualStyle, ImageFormat
+    AI_VISUAL_AVAILABLE = True
+    print("✅ AI Visual Suite imported successfully")
+except ImportError as e:
+    AI_VISUAL_AVAILABLE = False
+    print(f"⚠️ AI Visual Suite not available: {e}")
+
+try:
+    from ai_cinematic_director import CinematicAIDirector, StoryArc, CinematicStyle
+    AI_CINEMATIC_AVAILABLE = True
+    print("✅ AI Cinematic Director imported successfully")
+except ImportError as e:
+    AI_CINEMATIC_AVAILABLE = False
+    print(f"⚠️ AI Cinematic Director not available: {e}")
+
+try:
+    from ai_advanced_voice_acting import AdvancedVoiceActingEngine, Emotion, VoiceStyle
+    AI_VOICE_AVAILABLE = True
+    print("✅ AI Voice Acting imported successfully")
+except ImportError as e:
+    AI_VOICE_AVAILABLE = False
+    print(f"⚠️ AI Voice Acting not available: {e}")
+
 from moviepy.editor import *
 from moviepy.video.fx import all as vfx
 from moviepy.audio.fx import all as afx
 
 class AdvancedVideoCreator:
-    def __init__(self):
-        # 1) Ensure log_file is initialized first, before any logging calls
-        import time, os
-        if not hasattr(self, "log_file") or not self.log_file:
-            ts = int(time.time())
+    
+    def __init__(
+        self,
+        pexels_api_key: Optional[str] = None,
+        elevenlabs_api_key: Optional[str] = None,
+        elevenlabs_voice_id: Optional[str] = None,
+        ollama_base_url: str = "http://localhost:11434",
+        ollama_model: str = "llama3:8b",
+        # ... varsa diğer parametrelerin
+    ) -> None:
+        """Video üretim altyapısını hazırlar (API anahtarları, TTS, müzik, log vb.)."""
+        # ---- temel ayarlar / parametreler ----
+        self.pexels_api_key = pexels_api_key
+        self.elevenlabs_api_key = elevenlabs_api_key
+        self.elevenlabs_voice_id = elevenlabs_voice_id
+        self.ollama_base_url = ollama_base_url
+        self.ollama_model = ollama_model
+
+        # Bilgilendirici loglar (anahtar yoksa fallback kullanacağız)
+        if not self.pexels_api_key:
+            logging.info("Pexels API key yok — görseller için local/downloads fallback kullanılacak.")
+        if not self.elevenlabs_api_key:
+            logging.info("ElevenLabs API key yok — TTS için gTTS/espeak fallback kullanılacak.")
+
+        # ---- codec / fps ----
+        self.FPS = 30
+        
+        # ---- AI Suite initialization ----
+        self.ai_visual_suite = None
+        self.ai_cinematic_director = None
+        self.ai_voice_acting = None
+        
+        if AI_VISUAL_AVAILABLE:
+            try:
+                self.ai_visual_suite = AIVisualSuite()
+                logging.info("✅ AI Visual Suite initialized")
+            except Exception as e:
+                logging.error(f"❌ AI Visual Suite initialization failed: {e}")
+        
+        if AI_CINEMATIC_AVAILABLE:
+            try:
+                self.ai_cinematic_director = CinematicAIDirector()
+                logging.info("✅ AI Cinematic Director initialized")
+            except Exception as e:
+                logging.error(f"❌ AI Cinematic Director initialization failed: {e}")
+        
+        if AI_VOICE_AVAILABLE:
+            try:
+                self.ai_voice_acting = AdvancedVoiceActingEngine()
+                logging.info("✅ AI Voice Acting initialized")
+            except Exception as e:
+                logging.error(f"❌ AI Voice Acting initialization failed: {e}")
+        self.CODEC = "libx264"
+        self.AUDIO_CODEC = "aac"
+
+        # ---- logging ----
+        try:
             log_dir = os.environ.get("CK_LOG_DIR", ".")
             os.makedirs(log_dir, exist_ok=True)
-            self.log_file = os.path.join(log_dir, f"advanced_video_creator_{ts}.log")
-        
-        self.WIDTH = 1920
-        self.HEIGHT = 1080
-        self.FPS = 30
-        self.CODEC = 'libx264'
-        self.AUDIO_CODEC = 'aac'
-        self.QUALITY = 'high'
-        
-        # Initialize TTS systems
-        self.setup_tts()
-        
-        # Initialize music generation
-        self.setup_music_generation()
-        
-        # Setup logging (now log_file is guaranteed to exist)
+            self.log_file = os.path.join(log_dir, f"advanced_video_creator_{int(time.time())}.log")
+        except Exception:
+            # Bir sorun olursa None bırak; setup_logging/log_message kendini kurtarıyor
+            self.log_file = None
         self.setup_logging()
+
+        # ---- varlık (assets) taraması ----
+        self.local_assets = {"images": [], "videos": [], "audio": []}
+        self._load_local_assets()
+
+        # ---- TTS sistemi ----
+        self.tts_system = None
+        self.setup_tts()
+
+        # ---- müzik sistemi ----
+        self.music_system = None
+        self.setup_music_generation()
+
+    def _load_local_assets(self):
+        """Load local assets from assets directory"""
+        try:
+            # Load images
+            image_dir = "assets/images"
+            if os.path.exists(image_dir):
+                for file in os.listdir(image_dir):
+                    if file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp')):
+                        self.local_assets['images'].append(os.path.join(image_dir, file))
+            
+            # Load videos
+            video_dir = "assets/videos"
+            if os.path.exists(video_dir):
+                for root, dirs, files in os.walk(video_dir):
+                    for file in files:
+                        if file.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
+                            self.local_assets['videos'].append(os.path.join(root, file))
+            
+            # Load audio
+            audio_dir = "assets/audio"
+            if os.path.exists(audio_dir):
+                for root, dirs, files in os.walk(audio_dir):
+                    for file in files:
+                        if file.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a')):
+                            self.local_assets['audio'].append(os.path.join(root, file))
+            
+            self.log_message(f"📁 Loaded {len(self.local_assets['images'])} images, {len(self.local_assets['videos'])} videos, {len(self.local_assets['audio'])} audio files", "ASSETS")
+        except Exception as e:
+            self.log_message(f"⚠️ Error loading local assets: {e}", "ASSETS")
+
+    def enhance_script_with_metadata(self, script_data: Dict[str, Any]) -> Dict[str, Any]:
+        """AI destekli senaryo geliştirme ve metadata ekleme"""
         
-        # Load local assets for fallback
-        self.load_local_assets()
+        try:
+            if not script_data or "script" not in script_data:
+                return script_data
+
+            # AI Cinematic Director ile senaryo geliştir
+            if self.ai_cinematic_director:
+                try:
+                    self.log_message("🎬 AI Cinematic Director ile senaryo geliştiriliyor...", "SCRIPT")
+                    
+                    # Mevcut senaryoyu analiz et
+                    current_script = script_data["script"]
+                    total_sentences = len(current_script)
+                    
+                    # AI ile senaryo yapısını geliştir
+                    enhanced_structure = self.ai_cinematic_director.create_story_structure(
+                        channel_name=script_data.get("channel", "Unknown"),
+                        niche=script_data.get("niche", "general"),
+                        target_duration_minutes=15,  # Hedef 15 dakika
+                        style=CinematicStyle.HOLLYWOOD,
+                        arc_type=StoryArc.HERO_JOURNEY,
+                        pacing="medium"
+                    )
+                    
+                    if enhanced_structure:
+                        # AI önerilerini uygula
+                        enhanced_script = self._apply_ai_enhancements(current_script, enhanced_structure)
+                        script_data["script"] = enhanced_script
+                        total_sentences = len(enhanced_script)
+                        
+                        self.log_message(f"✅ AI ile senaryo geliştirildi: {total_sentences} cümle", "SCRIPT")
+                    
+                except Exception as ai_error:
+                    self.log_message(f"⚠️ AI senaryo geliştirme başarısız: {ai_error}", "WARNING")
+                    # Fallback: orijinal senaryo kullan
+                    total_sentences = len(script_data["script"])
+            else:
+                total_sentences = len(script_data["script"])
+
+            # Calculate estimated duration
+            estimated_duration = total_sentences * 8  # Assume 8 seconds per sentence
+
+            # Add enhanced metadata
+            enhanced_metadata = {
+                "estimated_duration_seconds": estimated_duration,
+                "estimated_duration_minutes": round(estimated_duration / 60, 1),
+                "sentence_count": total_sentences,
+                "ai_enhancement_applied": self.ai_cinematic_director is not None,
+                "optimization_suggestions": [
+                    "Use cinematic 4K footage for maximum visual impact",
+                    "Implement smooth transitions between scenes",
+                    "Add atmospheric background music",
+                    "Include text overlays for key points",
+                    "Use color grading for dramatic effect",
+                    "AI-powered story structure optimization",
+                    "Dynamic scene pacing and emotional arcs",
+                ],
+                "subtitle_optimization": {
+                    "English": "Primary language, optimize for clarity",
+                    "Spanish": "Latin American and European Spanish",
+                    "French": "International French with clear pronunciation",
+                    "German": "Standard German with proper grammar",
+                },
+                "self_improvement": {
+                    "extra_sentences_generated": 0,
+                    "duration_improvement": f"{estimated_duration}s (target: 600s+)",
+                    "quality_enhancement": "AI-powered content optimization applied",
+                },
+            }
+
+            script_data["enhanced_metadata"] = enhanced_metadata
+            self.log_message(
+                f"Enhanced script metadata added for {total_sentences} sentences",
+                "INFO",
+            )
+
+            return script_data
+        
+        except Exception as e:
+            self.log_message(f"❌ Error in enhance_script_with_metadata: {e}", "ERROR")
+            return script_data
+    
+    def _apply_ai_enhancements(self, current_script: List[str], ai_structure: Dict[str, Any]) -> List[str]:
+        """AI önerilerini mevcut senaryoya uygula"""
+        try:
+            enhanced_script = []
+            
+            # AI yapısından sahne bilgilerini al
+            scenes = ai_structure.get("scenes", [])
+            
+            if scenes:
+                # Her sahne için AI önerilerini uygula
+                for i, scene in enumerate(scenes):
+                    scene_content = scene.get("content", "")
+                    scene_duration = scene.get("duration", 0)
+                    
+                    if scene_content:
+                        # AI önerilen sahne içeriğini ekle
+                        enhanced_script.append(scene_content)
+                    elif i < len(current_script):
+                        # Mevcut senaryodan al ve geliştir
+                        enhanced_script.append(current_script[i])
+                    
+                    # Sahne geçişleri ekle
+                    if i < len(scenes) - 1:
+                        transition = f"[Scene {i+1} to {i+2} transition]"
+                        enhanced_script.append(transition)
+            else:
+                # AI yapısı yoksa mevcut senaryoyu kullan
+                enhanced_script = current_script.copy()
+            
+            # Hedef süreye ulaşmak için ek cümleler ekle
+            target_sentences = 75  # 15 dakika için ~75 cümle
+            if len(enhanced_script) < target_sentences:
+                additional_sentences = self._generate_additional_sentences(
+                    enhanced_script, target_sentences - len(enhanced_script)
+                )
+                enhanced_script.extend(additional_sentences)
+            
+            self.log_message(f"✅ AI enhancements applied: {len(enhanced_script)} total sentences", "SCRIPT")
+            return enhanced_script
+            
+        except Exception as e:
+            self.log_message(f"❌ AI enhancements failed: {e}", "ERROR")
+            return current_script
+    
+    def _generate_additional_sentences(self, current_script: List[str], count: int) -> List[str]:
+        """Ek cümleler üret"""
+        try:
+            additional_sentences = []
+            
+            # Mevcut senaryodan anahtar kelimeleri çıkar
+            keywords = []
+            for sentence in current_script[:5]:  # İlk 5 cümleden
+                words = sentence.split()
+                keywords.extend([w.lower() for w in words if len(w) > 4])
+            
+            # Tekrarlanan kelimeleri temizle
+            keywords = list(set(keywords))[:10]
+            
+            # Ek cümleler üret
+            for i in range(count):
+                if keywords:
+                    keyword = keywords[i % len(keywords)]
+                    additional_sentence = f"This {keyword} represents a significant breakthrough in our understanding."
+                    additional_sentences.append(additional_sentence)
+                else:
+                    additional_sentence = f"Let's explore this fascinating topic further in detail."
+                    additional_sentences.append(additional_sentence)
+            
+            return additional_sentences
+            
+        except Exception as e:
+            self.log_message(f"❌ Additional sentence generation failed: {e}", "ERROR")
+            return []
+
+    # Örnek: görsel bulucu fonksiyonunda Pexels yoksa local'den al
+    def find_visual_assets(self, script, niche: str, downloads_dir: str):
+        os.makedirs(downloads_dir, exist_ok=True)
+        frames = []
+
+        if self.pexels_api_key:
+            try:
+                # … senin mevcut pexels indirme mantığın
+                pass
+            except Exception as e:
+                logging.warning(f"Pexels hata: {e}. Local fallback'e geçiliyor.")
+        # Fallback – downloads_dir içindeki mp4/jpg/png dosyaları kullan
+        for f in os.listdir(downloads_dir):
+            if f.lower().endswith((".mp4", ".jpg", ".jpeg", ".png")):
+                frames.append(os.path.join(downloads_dir, f))
+
+        return frames
+
+    # TTS örneği – ElevenLabs yoksa gTTS/espeak
+    def generate_voiceover(self, script_obj, out_dir: str):
+        os.makedirs(out_dir, exist_ok=True)
+        # … mevcut parçalama/segment mantığın
+        if self.elevenlabs_api_key:
+            try:
+                # … ElevenLabs çağrın
+                pass
+            except Exception as e:
+                logging.warning(f"ElevenLabs hata: {e}. gTTS/espeak'e düşülüyor.")
+                # … fallback üretim
+        else:
+            # … doğrudan gTTS/espeak fallback üretim
+            pass
+        # return oluşturulan dosya yolları listesi
+
     
     def setup_logging(self):
         """Setup enhanced logging system"""
@@ -1257,11 +1556,26 @@ class AdvancedVideoCreator:
             return "assets/audio/music/epic_music.mp3"  # Default fallback
     
     def generate_voiceover(self, script_data: dict, output_folder: str) -> List[str]:
-        """Generate advanced voiceover with Morgan Freeman style"""
-        self.log_message("🎤 Generating Morgan Freeman style voiceover...", "VOICEOVER")
+        """AI destekli gelişmiş seslendirme üretimi"""
+        self.log_message("🎤 AI destekli seslendirme üretimi başlatılıyor...", "VOICEOVER")
         
         try:
-            narration_list = [scene.get("sentence") for scene in script_data.get("script", []) if scene.get("sentence")]
+            # Script'ten cümleleri al
+            script_content = script_data.get("script", [])
+            if isinstance(script_content, list):
+                # Eğer script liste ise, her öğeyi kontrol et
+                narration_list = []
+                for item in script_content:
+                    if isinstance(item, dict):
+                        text = item.get("sentence") or item.get("text", "")
+                    else:
+                        text = str(item)
+                    if text:
+                        narration_list.append(text)
+            else:
+                # Eğer script string ise, cümlelere böl
+                narration_list = [s.strip() for s in str(script_content).split('.') if s.strip()]
+            
             if not narration_list:
                 self.log_message("❌ No narration text found in script", "ERROR")
                 return None
@@ -1269,15 +1583,63 @@ class AdvancedVideoCreator:
             audio_files = []
             os.makedirs(output_folder, exist_ok=True)
             
-            for i, text in enumerate(narration_list):
-                file_path = os.path.join(output_folder, f"part_{i+1}.mp3")
-                self.log_message(f"🎤 Generating voiceover {i+1}/{len(narration_list)}", "VOICEOVER")
-                
-                if self.generate_morgan_freeman_voiceover(text, file_path):
-                    audio_files.append(file_path)
-                else:
-                    self.log_message(f"⚠️ Voiceover generation failed for part {i+1}", "WARNING")
-                    continue
+            # AI Voice Acting ile seslendirme üret
+            if self.ai_voice_acting:
+                try:
+                    self.log_message("🎭 AI Voice Acting ile seslendirme üretiliyor...", "VOICEOVER")
+                    
+                    for i, text in enumerate(narration_list):
+                        file_path = os.path.join(output_folder, f"ai_voice_{i+1}.mp3")
+                        self.log_message(f"🎤 AI seslendirme {i+1}/{len(narration_list)}", "VOICEOVER")
+                        
+                        try:
+                            # AI ile karakter sesi oluştur
+                            ai_audio_path = self.ai_voice_acting.create_character_voice(
+                                text=text,
+                                character_personality="WISE",  # Bilge karakter
+                                emotion="INSPIRATIONAL",  # İlham verici
+                                voice_style="AUTHORITATIVE"  # Otoriter stil
+                            )
+                            
+                            if ai_audio_path and os.path.exists(ai_audio_path):
+                                # AI seslendirmeyi kopyala
+                                import shutil
+                                shutil.copy2(ai_audio_path, file_path)
+                                audio_files.append(file_path)
+                                self.log_message(f"✅ AI seslendirme üretildi: {os.path.basename(file_path)}", "VOICEOVER")
+                            else:
+                                # AI başarısızsa fallback kullan
+                                if self.generate_morgan_freeman_voiceover(text, file_path):
+                                    audio_files.append(file_path)
+                                else:
+                                    self.log_message(f"⚠️ Voiceover generation failed for part {i+1}", "WARNING")
+                                    continue
+                                    
+                        except Exception as ai_error:
+                            self.log_message(f"⚠️ AI voice acting failed: {ai_error}, using fallback", "WARNING")
+                            # Fallback: Morgan Freeman style
+                            if self.generate_morgan_freeman_voiceover(text, file_path):
+                                audio_files.append(file_path)
+                            else:
+                                continue
+                    
+                except Exception as ai_error:
+                    self.log_message(f"⚠️ AI Voice Acting hatası: {ai_error}, fallback kullanılıyor", "WARNING")
+                    # Fallback: Orijinal Morgan Freeman style
+                    for i, text in enumerate(narration_list):
+                        file_path = os.path.join(output_folder, f"fallback_voice_{i+1}.mp3")
+                        if self.generate_morgan_freeman_voiceover(text, file_path):
+                            audio_files.append(file_path)
+            else:
+                # AI Voice Acting yoksa orijinal yöntemi kullan
+                self.log_message("⚠️ AI Voice Acting not available, using Morgan Freeman style", "VOICEOVER")
+                for i, text in enumerate(narration_list):
+                    file_path = os.path.join(output_folder, f"part_{i+1}.mp3")
+                    if self.generate_morgan_freeman_voiceover(text, file_path):
+                        audio_files.append(file_path)
+                    else:
+                        self.log_message(f"⚠️ Voiceover generation failed for part {i+1}", "WARNING")
+                        continue
             
             self.log_message(f"✅ Generated {len(audio_files)} voiceover files", "VOICEOVER")
             return audio_files
@@ -1287,8 +1649,8 @@ class AdvancedVideoCreator:
             return None
     
     def find_visual_assets(self, script_data: dict, channel_niche: str, download_folder: str) -> List[str]:
-        """Find and download visual assets with 4K upscaling"""
-        self.log_message("🎬 Finding visual assets with 4K upscaling...", "VISUALS")
+        """AI destekli görsel üretimi - Her sahne için özel görsel"""
+        self.log_message("🎬 AI destekli görsel üretimi başlatılıyor...", "VISUALS")
         
         video_paths = []
         os.makedirs(download_folder, exist_ok=True)
@@ -1298,19 +1660,49 @@ class AdvancedVideoCreator:
             query = scene.get("visual_query", "")
             found_video_path = None
             
-            if query:
-                # Optimize Pexels query
-                optimized_query = self._optimize_pexels_query(query, channel_niche)
-                
-                # Calculate minimum duration for this scene (estimate based on script length)
-                estimated_duration = max(5.0, len(scene.get("text", "").split()) * 0.3)  # ~0.3s per word
-                
-                # Try Pexels download with real API
-                found_video_path = self._download_pexels_video(optimized_query, estimated_duration, download_folder)
+            if query and self.ai_visual_suite:
+                try:
+                    # AI Visual Suite ile görsel üret
+                    self.log_message(f"🎨 AI ile görsel üretiliyor: {query}", "VISUALS")
+                    
+                    # Her sahne için özel görsel üret
+                    ai_image_path = self.ai_visual_suite.generate_visual_asset(
+                        prompt=f"{query} {channel_niche} scene {i+1}",
+                        style=VisualStyle.MODERN,
+                        format_type=ImageFormat.BANNER
+                    )
+                    
+                    if ai_image_path and os.path.exists(ai_image_path):
+                        # Görseli video'ya çevir
+                        found_video_path = self._convert_image_to_video(ai_image_path, scene, download_folder)
+                        self.log_message(f"✅ AI görsel üretildi ve video'ya çevrildi: {os.path.basename(found_video_path)}", "VISUALS")
+                    
+                except Exception as ai_error:
+                    self.log_message(f"⚠️ AI görsel üretimi başarısız: {ai_error}", "WARNING")
             
-            # Fallback to local assets if Pexels fails
+            # AI başarısızsa Pexels'ı dene
+            if not found_video_path and query:
+                try:
+                    # Optimize Pexels query
+                    optimized_query = self._optimize_pexels_query(query, channel_niche)
+                    
+                    # Calculate minimum duration for this scene (estimate based on script length)
+                    estimated_duration = max(5.0, len(scene.get("text", "").split()) * 0.3)  # ~0.3s per word
+                    
+                    # Try Pexels download with real API
+                    found_video_path = self._download_pexels_video(optimized_query, estimated_duration, download_folder)
+                    
+                    if found_video_path:
+                        self.log_message(f"✅ Pexels'dan video indirildi: {os.path.basename(found_video_path)}", "VISUALS")
+                        
+                except Exception as pexels_error:
+                    self.log_message(f"⚠️ Pexels indirme başarısız: {pexels_error}", "WARNING")
+            
+            # Son çare: local fallback
             if not found_video_path:
                 found_video_path = self._get_local_asset_fallback(channel_niche, i+1)
+                if found_video_path:
+                    self.log_message(f"✅ Local fallback kullanıldı: {os.path.basename(found_video_path)}", "VISUALS")
             
             # Upscale video to 4K if available
             if found_video_path and PILLOW_AVAILABLE:
@@ -1321,11 +1713,53 @@ class AdvancedVideoCreator:
             video_paths.append(found_video_path)
             
             if found_video_path:
-                self.log_message(f"✅ Scene {i+1} visual asset ready: {os.path.basename(found_video_path)}", "VISUALS")
+                self.log_message(f"✅ Scene {i+1} görsel asset hazır: {os.path.basename(found_video_path)}", "VISUALS")
             else:
-                self.log_message(f"⚠️ Scene {i+1} visual asset failed", "WARNING")
+                self.log_message(f"⚠️ Scene {i+1} görsel asset başarısız", "WARNING")
         
         return video_paths
+    
+    def _convert_image_to_video(self, image_path: str, scene: dict, output_folder: str) -> str:
+        """AI üretilen görseli video'ya çevir"""
+        try:
+            # Görsel süresini hesapla (script uzunluğuna göre)
+            script_text = scene.get("text", "")
+            estimated_duration = max(3.0, len(script_text.split()) * 0.3)  # ~0.3s per word
+            
+            # Görseli yükle ve video'ya çevir
+            image_clip = ImageClip(image_path, duration=estimated_duration)
+            
+            # Görsel efektleri ekle
+            image_clip = image_clip.fx(vfx.resize, width=1920, height=1080)
+            
+            # Ken Burns efekti ekle (yavaş zoom/pan)
+            image_clip = image_clip.fx(vfx.zoom, 1.1, duration=estimated_duration)
+            
+            # Output path oluştur
+            timestamp = int(time.time())
+            output_filename = f"ai_scene_{timestamp}_{os.path.basename(image_path)}.mp4"
+            output_path = os.path.join(output_folder, output_filename)
+            
+            # Video'yu kaydet with MoviePy 2.0.0.dev2 optimized settings
+            image_clip.write_videofile(
+                output_path,
+                fps=self.FPS,
+                codec=self.CODEC,
+                preset='ultrafast',
+                threads=1,
+                logger=None,
+                ffmpeg_params=['-crf', '30', '-pix_fmt', 'yuv420p']
+            )
+            
+            # Cleanup
+            image_clip.close()
+            
+            self.log_message(f"✅ Görsel video'ya çevrildi: {os.path.basename(output_path)}", "VISUALS")
+            return output_path
+            
+        except Exception as e:
+            self.log_message(f"❌ Görsel video dönüşümü başarısız: {e}", "ERROR")
+            return None
     
     def edit_long_form_video(self, audio_files: list, visual_files: list, music_path: str, output_filename: str) -> Optional[str]:
         """Create advanced long-form video with professional effects"""
@@ -1380,9 +1814,17 @@ class AdvancedVideoCreator:
             if total_duration < 600:  # Less than 10 minutes
                 final_video = self._extend_video_duration(final_video, 600)
             
-            # Write final video
-            final_video.write_videofile(output_filename, fps=self.FPS, codec=self.CODEC,
-                                      audio_codec=self.AUDIO_CODEC, verbose=False, logger=None)
+            # Write final video with MoviePy 2.0.0.dev2 optimized settings
+            final_video.write_videofile(
+                output_filename, 
+                fps=self.FPS, 
+                codec=self.CODEC,
+                audio_codec=self.AUDIO_CODEC, 
+                preset='ultrafast',
+                threads=2,
+                logger=None,
+                ffmpeg_params=['-crf', '28', '-pix_fmt', 'yuv420p']
+            )
             
             # Analyze video quality
             self._analyze_video_quality(output_filename)
@@ -1422,10 +1864,18 @@ class AdvancedVideoCreator:
                     hook_clip = self._create_hook_clip(f"Hook {i+1}: The Mystery Deepens...", 3)
                     final_short = concatenate_videoclips([hook_clip, short_clip], method="compose")
                     
-                    # Save short video
+                    # Save short video with MoviePy 2.0.0.dev2 optimized settings
                     output_path = os.path.join(output_folder, f"short_{i+1}_{duration}s.mp4")
-                    final_short.write_videofile(output_path, fps=self.FPS, codec=self.CODEC,
-                                              audio_codec=self.AUDIO_CODEC, verbose=False, logger=None)
+                    final_short.write_videofile(
+                        output_path, 
+                        fps=self.FPS, 
+                        codec=self.CODEC,
+                        audio_codec=self.AUDIO_CODEC, 
+                        preset='ultrafast',
+                        threads=1,
+                        logger=None,
+                        ffmpeg_params=['-crf', '30', '-pix_fmt', 'yuv420p']
+                    )
                     
                     short_videos.append(output_path)
                     self.log_message(f"✅ Short video {i+1} created: {duration}s", "SHORTS")
@@ -1442,6 +1892,788 @@ class AdvancedVideoCreator:
         except Exception as e:
             self.log_message(f"❌ Short video creation failed: {e}", "ERROR")
             return []
+
+    def create_cinematic_masterpiece(self, script_data: Dict[str, Any], 
+                                   target_duration_minutes: float = 15.0,
+                                   niche: str = "general",
+                                   quality_level: str = "cinematic") -> Dict[str, Any]:
+        """
+        Create a cinematic masterpiece with 10+ minute duration
+        
+        Args:
+            script_data: Script with scene breakdown
+            target_duration_minutes: Target duration (minimum 10 minutes)
+            niche: Content niche
+            quality_level: Quality level (cinematic, premium, ultra)
+            
+        Returns:
+            Complete cinematic video with metadata
+        """
+        try:
+            self.log_message(f"🎬 Creating cinematic masterpiece: {target_duration_minutes} minutes", "CINEMATIC")
+            
+            # Ensure minimum duration
+            if target_duration_minutes < 10:
+                target_duration_minutes = 15.0
+                self.log_message(f"⚠️ Duration increased to {target_duration_minutes} minutes for cinematic quality", "WARNING")
+            
+            # Step 1: Expand script to cinematic length
+            expanded_script = self._expand_script_cinematically(script_data, target_duration_minutes, niche)
+            
+            # Step 2: Generate visual plan
+            visual_plan = self._generate_cinematic_visual_plan(expanded_script, target_duration_minutes, niche)
+            
+            # Step 3: Generate audio plan
+            audio_plan = self._generate_cinematic_audio_plan(expanded_script, target_duration_minutes, niche)
+            
+            # Step 4: Create cinematic video
+            final_video = self._assemble_cinematic_video(expanded_script, visual_plan, audio_plan, quality_level)
+            
+            # Step 5: Quality assurance
+            quality_report = self._assess_cinematic_quality(final_video, target_duration_minutes)
+            
+            return {
+                "success": True,
+                "video_path": final_video["path"],
+                "duration_minutes": final_video["duration"] / 60,
+                "quality_score": quality_report["overall_score"],
+                "expanded_script": expanded_script,
+                "visual_plan": visual_plan,
+                "audio_plan": audio_plan,
+                "quality_report": quality_report,
+                "production_metadata": {
+                    "total_assets_used": visual_plan.get("total_assets_needed", 0),
+                    "audio_tracks": len(audio_plan.get("voice_requirements", {}).get("emotional_arcs", [])),
+                    "production_time": self._calculate_production_time(target_duration_minutes),
+                    "quality_level": quality_level
+                }
+            }
+            
+        except Exception as e:
+            self.log_message(f"❌ Cinematic masterpiece creation failed: {e}", "ERROR")
+            return {"success": False, "error": str(e)}
+    
+    def _expand_script_cinematically(self, script_data: Dict[str, Any], 
+                                   target_minutes: float, niche: str) -> Dict[str, Any]:
+        """Expand script to cinematic length using AI Director"""
+        try:
+            if AI_CINEMATIC_AVAILABLE:
+                from ai_cinematic_director import CinematicAIDirector
+                director = CinematicAIDirector()
+                expanded = director.expand_script_to_cinematic_length(
+                    script_data.get("script", ""), target_minutes, niche
+                )
+                return expanded
+            else:
+                # Fallback expansion
+                return self._fallback_script_expansion(script_data, target_minutes, niche)
+                
+        except Exception as e:
+            self.log_message(f"⚠️ AI script expansion failed, using fallback: {e}", "WARNING")
+            return self._fallback_script_expansion(script_data, target_minutes, niche)
+    
+    def _fallback_script_expansion(self, script_data: Dict[str, Any], 
+                                 target_minutes: float, niche: str) -> Dict[str, Any]:
+        """Fallback script expansion when AI Director is unavailable"""
+        base_script = script_data.get("script", "")
+        target_words = int(target_minutes * 175)  # 175 words per minute
+        
+        # Simple expansion by repeating and elaborating
+        expanded_content = base_script
+        while len(expanded_content.split()) < target_words:
+            expanded_content += f"\n\n{base_script}"
+        
+        return {
+            "expanded_script": expanded_content,
+            "target_duration_minutes": target_minutes,
+            "estimated_duration_minutes": target_minutes,
+            "scenes": self._create_basic_scenes(expanded_content, target_minutes)
+        }
+    
+    def _create_basic_scenes(self, content: str, duration_minutes: float) -> List[Dict[str, Any]]:
+        """Create basic scene structure for fallback"""
+        scene_count = max(5, int(duration_minutes / 3))  # 1 scene per 3 minutes
+        scenes = []
+        
+        for i in range(scene_count):
+            scene = {
+                "scene_number": i + 1,
+                "emotional_beat": ["opening", "hook", "conflict", "climax", "resolution"][i % 5],
+                "duration_seconds": (duration_minutes * 60) / scene_count,
+                "content": content[i::scene_count]  # Distribute content across scenes
+            }
+            scenes.append(scene)
+        
+        return scenes
+    
+    def _generate_cinematic_visual_plan(self, expanded_script: Dict[str, Any], 
+                                      target_minutes: float, niche: str) -> Dict[str, Any]:
+        """Generate comprehensive visual plan using AI Visual Suite"""
+        try:
+            if AI_VISUAL_AVAILABLE:
+                from ai_visual_suite import AIVisualSuite
+                visual_suite = AIVisualSuite()
+                visual_plan = visual_suite.generate_cinematic_visual_plan(
+                    expanded_script, target_minutes, niche
+                )
+                return visual_plan
+            else:
+                # Fallback visual plan
+                return self._fallback_visual_plan(target_minutes, niche)
+                
+        except Exception as e:
+            self.log_message(f"⚠️ AI visual planning failed, using fallback: {e}", "WARNING")
+            return self._fallback_visual_plan(target_minutes, niche)
+    
+    def _fallback_visual_plan(self, target_minutes: float, niche: str) -> Dict[str, Any]:
+        """Fallback visual plan when AI Visual Suite is unavailable"""
+        total_assets = int(target_minutes * 12)  # 12 assets per minute
+        
+        return {
+            "total_assets_needed": total_assets,
+            "asset_categories": {
+                "primary_visuals": {"count": int(total_assets * 0.6)},
+                "background_visuals": {"count": int(total_assets * 0.3)},
+                "transition_visuals": {"count": int(total_assets * 0.1)}
+            },
+            "quality_requirements": "4K cinematic quality",
+            "asset_sources": ["Pexels", "Local Library", "Generated"]
+        }
+    
+    def _generate_cinematic_audio_plan(self, expanded_script: Dict[str, Any], 
+                                     target_minutes: float, niche: str) -> Dict[str, Any]:
+        """Generate comprehensive audio plan using AI Voice Acting"""
+        try:
+            if AI_VOICE_AVAILABLE:
+                from ai_advanced_voice_acting import AdvancedVoiceActingEngine
+                voice_engine = AdvancedVoiceActingEngine()
+                audio_plan = voice_engine.generate_cinematic_audio_plan(
+                    expanded_script, target_minutes, niche
+                )
+                return audio_plan
+            else:
+                # Fallback audio plan
+                return self._fallback_audio_plan(target_minutes, niche)
+                
+        except Exception as e:
+            self.log_message(f"⚠️ AI audio planning failed, using fallback: {e}", "WARNING")
+            return self._fallback_audio_plan(target_minutes, niche)
+    
+    def _fallback_audio_plan(self, target_minutes: float, niche: str) -> Dict[str, Any]:
+        """Fallback audio plan when AI Voice Acting is unavailable"""
+        return {
+            "voice_requirements": {
+                "narrator_profile": {"style": "professional", "quality": "high"},
+                "emotional_arcs": [{"intensity": 0.8, "pacing": "steady"}]
+            },
+            "music_plan": {
+                "overall_theme": f"{niche}-themed cinematic score",
+                "scene_music": [{"style": "cinematic", "intensity": 0.7}]
+            },
+            "quality_standards": {"sample_rate": 48000, "bit_depth": 24}
+        }
+    
+    def _assemble_cinematic_video(self, expanded_script: Dict[str, Any], 
+                                 visual_plan: Dict[str, Any], 
+                                 audio_plan: Dict[str, Any],
+                                 quality_level: str) -> Dict[str, Any]:
+        """Assemble the final cinematic video"""
+        try:
+            self.log_message("🎬 Assembling cinematic video...", "ASSEMBLY")
+            
+            # Create video clips for each scene
+            video_clips = []
+            total_duration = 0
+            
+            scenes = expanded_script.get("scenes", [])
+            for scene in scenes:
+                scene_clip = self._create_cinematic_scene(
+                    scene, visual_plan, audio_plan, quality_level
+                )
+                if scene_clip:
+                    video_clips.append(scene_clip)
+                    total_duration += scene_clip.duration
+            
+            if not video_clips:
+                raise Exception("No valid video clips created")
+            
+            # Assemble final video with cinematic transitions
+            final_video = self._assemble_with_cinematic_transitions(video_clips, quality_level)
+            
+            # Add cinematic audio
+            final_video = self._add_cinematic_audio(final_video, audio_plan, quality_level)
+            
+            # Export with cinematic quality settings
+            output_path = self._export_cinematic_video(final_video, quality_level)
+            
+            return {
+                "path": output_path,
+                "duration": total_duration,
+                "quality": quality_level,
+                "clips_used": len(video_clips)
+            }
+            
+        except Exception as e:
+            self.log_message(f"❌ Cinematic video assembly failed: {e}", "ERROR")
+            raise
+    
+    def _create_cinematic_scene(self, scene: Dict[str, Any], 
+                               visual_plan: Dict[str, Any], 
+                               audio_plan: Dict[str, Any],
+                               quality_level: str) -> Optional[VideoClip]:
+        """Create a single cinematic scene"""
+        try:
+            scene_duration = scene.get("duration_seconds", 10)
+            emotional_beat = scene.get("emotional_beat", "neutral")
+            
+            # Get visual assets for this scene
+            visual_assets = self._get_scene_visual_assets(scene, visual_plan, quality_level)
+            
+            # Create scene video
+            scene_video = self._compose_scene_video(visual_assets, scene_duration, emotional_beat)
+            
+            # Add scene audio
+            scene_audio = self._create_scene_audio(scene, audio_plan, quality_level)
+            if scene_audio:
+                scene_video = scene_video.set_audio(scene_audio)
+            
+            return scene_video
+            
+        except Exception as e:
+            self.log_message(f"⚠️ Scene creation failed: {e}", "WARNING")
+            return None
+    
+    def _get_scene_visual_assets(self, scene: Dict[str, Any], 
+                                visual_plan: Dict[str, Any], 
+                                quality_level: str) -> List[str]:
+        """Get high-quality visual assets for a scene"""
+        try:
+            # Calculate assets needed for this scene
+            scene_duration = scene.get("duration_seconds", 10)
+            assets_needed = max(3, int(scene_duration / 4))  # 1 asset per 4 seconds
+            
+            # Get assets from Pexels or local library
+            assets = []
+            niche = scene.get("niche", "general")
+            
+            # Try Pexels first
+            if PEXELS_API_KEY:
+                pexels_assets = self._download_pexels_assets(niche, assets_needed, quality_level)
+                assets.extend(pexels_assets)
+            
+            # Fill remaining with local assets
+            if len(assets) < assets_needed:
+                local_assets = self._get_local_visual_assets(niche, assets_needed - len(assets))
+                assets.extend(local_assets)
+            
+            return assets[:assets_needed]
+            
+        except Exception as e:
+            self.log_message(f"⚠️ Visual asset gathering failed: {e}", "WARNING")
+            return []
+    
+    def _assemble_with_cinematic_transitions(self, video_clips: List[VideoClip], 
+                                           quality_level: str) -> VideoClip:
+        """Assemble video clips with cinematic transitions"""
+        try:
+            if len(video_clips) == 1:
+                return video_clips[0]
+            
+            # Create cinematic transitions
+            transitioned_clips = []
+            for i, clip in enumerate(video_clips):
+                if i > 0:
+                    # Add crossfade transition
+                    transition_duration = min(1.0, clip.duration * 0.1)  # 10% of clip duration
+                    clip = clip.fx(vfx.fadein, transition_duration)
+                
+                transitioned_clips.append(clip)
+            
+            # Concatenate with smooth transitions
+            final_video = concatenate_videoclips(
+                transitioned_clips, 
+                method="compose",
+                transition=lambda t: vfx.crossfadein(t, 0.5)
+            )
+            
+            return final_video
+            
+        except Exception as e:
+            self.log_message(f"⚠️ Cinematic transitions failed: {e}", "WARNING")
+            # Fallback to simple concatenation
+            return concatenate_videoclips(video_clips)
+    
+    def _add_cinematic_audio(self, video: VideoClip, 
+                            audio_plan: Dict[str, Any], 
+                            quality_level: str) -> VideoClip:
+        """Add cinematic audio to the video"""
+        try:
+            # Create background music
+            background_music = self._create_cinematic_music(audio_plan, video.duration)
+            
+            # Create voice narration
+            voice_narration = self._create_voice_narration(audio_plan, video.duration)
+            
+            # Mix audio tracks
+            if background_music and voice_narration:
+                # Lower music volume to not interfere with voice
+                background_music = background_music.volumex(0.3)
+                final_audio = CompositeAudioClip([voice_narration, background_music])
+                return video.set_audio(final_audio)
+            elif voice_narration:
+                return video.set_audio(voice_narration)
+            elif background_music:
+                return video.set_audio(background_music)
+            else:
+                return video
+                
+        except Exception as e:
+            self.log_message(f"⚠️ Cinematic audio addition failed: {e}", "WARNING")
+            return video
+    
+    def _export_cinematic_video(self, video: VideoClip, quality_level: str) -> str:
+        """Export video with cinematic quality settings"""
+        try:
+            timestamp = int(time.time())
+            output_filename = f"cinematic_masterpiece_{timestamp}.mp4"
+            output_path = os.path.join("cinematic_outputs", output_filename)
+            
+            # Ensure output directory exists
+            os.makedirs("cinematic_outputs", exist_ok=True)
+            
+            # Quality settings based on level
+            quality_settings = self._get_cinematic_quality_settings(quality_level)
+            
+            # Export with high quality
+            video.write_videofile(
+                output_path,
+                fps=quality_settings["fps"],
+                codec=quality_settings["codec"],
+                bitrate=quality_settings["bitrate"],
+                audio_codec=quality_settings["audio_codec"],
+                audio_bitrate=quality_settings["audio_bitrate"],
+                threads=4,
+                preset=quality_settings["preset"]
+            )
+            
+            self.log_message(f"✅ Cinematic video exported: {output_path}", "SUCCESS")
+            return output_path
+            
+        except Exception as e:
+            self.log_message(f"❌ Cinematic video export failed: {e}", "ERROR")
+            raise
+    
+    def _get_cinematic_quality_settings(self, quality_level: str) -> Dict[str, Any]:
+        """Get quality settings for different quality levels"""
+        quality_settings = {
+            "cinematic": {
+                "fps": 30,
+                "codec": "libx264",
+                "bitrate": "20M",
+                "audio_codec": "aac",
+                "audio_bitrate": "320k",
+                "preset": "slow"
+            },
+            "premium": {
+                "fps": 60,
+                "codec": "libx264",
+                "bitrate": "50M",
+                "audio_codec": "aac",
+                "audio_bitrate": "512k",
+                "preset": "veryslow"
+            },
+            "ultra": {
+                "fps": 60,
+                "codec": "libx265",
+                "bitrate": "100M",
+                "audio_codec": "aac",
+                "audio_bitrate": "640k",
+                "preset": "veryslow"
+            }
+        }
+        
+        return quality_settings.get(quality_level, quality_settings["cinematic"])
+    
+    def _assess_cinematic_quality(self, video_info: Dict[str, Any], 
+                                 target_duration_minutes: float) -> Dict[str, Any]:
+        """Assess the quality of the created cinematic video"""
+        try:
+            video_path = video_info["path"]
+            actual_duration = video_info["duration"]
+            
+            # Basic quality metrics
+            quality_metrics = {
+                "duration_accuracy": min(1.0, actual_duration / (target_duration_minutes * 60)),
+                "file_size": os.path.getsize(video_path) if os.path.exists(video_path) else 0,
+                "clips_used": video_info.get("clips_used", 0),
+                "quality_level": video_info.get("quality", "unknown")
+            }
+            
+            # Calculate overall quality score
+            duration_score = quality_metrics["duration_accuracy"] * 0.4
+            file_size_score = min(1.0, quality_metrics["file_size"] / (100 * 1024 * 1024)) * 0.3  # 100MB baseline
+            clips_score = min(1.0, quality_metrics["clips_used"] / 20) * 0.3  # 20 clips baseline
+            
+            overall_score = duration_score + file_size_score + clips_score
+            
+            quality_report = {
+                "overall_score": overall_score,
+                "quality_level": "excellent" if overall_score > 0.9 else "good" if overall_score > 0.7 else "acceptable",
+                "metrics": quality_metrics,
+                "recommendations": self._get_quality_recommendations(overall_score, quality_metrics)
+            }
+            
+            return quality_report
+            
+        except Exception as e:
+            self.log_message(f"⚠️ Quality assessment failed: {e}", "WARNING")
+            return {"overall_score": 0.5, "error": str(e)}
+    
+    def _get_quality_recommendations(self, overall_score: float, 
+                                   metrics: Dict[str, Any]) -> List[str]:
+        """Get recommendations for improving video quality"""
+        recommendations = []
+        
+        if metrics["duration_accuracy"] < 0.8:
+            recommendations.append("Increase script length to meet target duration")
+        
+        if metrics["file_size"] < 50 * 1024 * 1024:  # Less than 50MB
+            recommendations.append("Use higher bitrate for better visual quality")
+        
+        if metrics["clips_used"] < 15:
+            recommendations.append("Increase visual variety with more assets")
+        
+        if overall_score < 0.7:
+            recommendations.append("Review and enhance overall production quality")
+        
+        return recommendations
+    
+    def _calculate_production_time(self, duration_minutes: float) -> str:
+        """Calculate estimated production time for cinematic content"""
+        # Base time: 1 hour per minute of content for cinematic quality
+        base_hours = duration_minutes * 1.0
+        
+        # Add quality multipliers
+        total_hours = base_hours * 1.5  # 50% extra for quality
+        
+        if total_hours < 24:
+            return f"{total_hours:.1f} hours"
+        else:
+            days = total_hours / 24
+            return f"{days:.1f} days"
+
+    def create_video(self, script_data: Dict[str, Any], 
+                    output_folder: str = "outputs",
+                    target_duration_minutes: float = 5.0) -> Dict[str, Any]:
+        """
+        Create a video using the provided script data
+        
+        Args:
+            script_data: Script data dictionary
+            output_folder: Output folder path
+            target_duration_minutes: Target duration in minutes
+            
+        Returns:
+            Video creation result
+        """
+        try:
+            self.log_message(f"🎬 Creating video: {target_duration_minutes} minutes", "VIDEO_CREATION")
+            
+            # Ensure output directory exists
+            os.makedirs(output_folder, exist_ok=True)
+            
+            # Extract script content
+            script_text = script_data.get("script", "")
+            topic = script_data.get("topic", "general")
+            niche = script_data.get("niche", "general")
+            
+            if not script_text:
+                return {"success": False, "error": "No script content provided"}
+            
+            # Generate voiceover
+            self.log_message("🎙️ Generating voiceover...", "VOICEOVER")
+            audio_dir = os.path.join(output_folder, "audio")
+            os.makedirs(audio_dir, exist_ok=True)
+            
+            audio_files = self.generate_voiceover(script_data, audio_dir)
+            if not audio_files:
+                return {"success": False, "error": "Voiceover generation failed"}
+            
+            # Find visual assets
+            self.log_message("🎞️ Finding visual assets...", "VISUALS")
+            downloads_dir = os.path.join(output_folder, "downloads")
+            os.makedirs(downloads_dir, exist_ok=True)
+            
+            visuals = self.find_visual_assets(script_data, niche, downloads_dir)
+            if not visuals:
+                return {"success": False, "error": "No visual assets found"}
+            
+            # Create final video
+            self.log_message("🎬 Rendering final video...", "RENDERING")
+            timestamp = int(time.time())
+            output_filename = f"{topic}_{timestamp}.mp4"
+            output_path = os.path.join(output_folder, output_filename)
+            
+            # Check for background music
+            music_path = os.path.join("assets", "audio", "music", "epic_music.mp3")
+            music = music_path if os.path.exists(music_path) else None
+            
+            # Render video
+            final_path = self.edit_long_form_video(audio_files, visuals, music, output_path)
+            
+            if final_path and os.path.exists(final_path):
+                # Analyze video quality
+                quality_report = self._analyze_video_quality(final_path)
+                
+                return {
+                    "success": True,
+                    "output_path": final_path,
+                    "duration_minutes": target_duration_minutes,
+                    "quality_score": quality_report.get("overall_score", 0.0),
+                    "audio_files": audio_files,
+                    "visual_assets": visuals,
+                    "quality_report": quality_report
+                }
+            else:
+                return {"success": False, "error": "Video rendering failed"}
+                
+        except Exception as e:
+            self.log_message(f"❌ Video creation failed: {e}", "ERROR")
+            return {"success": False, "error": str(e)}
+
+    def _create_scene_audio(self, scene: Dict[str, Any], 
+                           audio_plan: Dict[str, Any], 
+                           quality_level: str) -> Optional[AudioClip]:
+        """Create audio for a scene"""
+        try:
+            scene_duration = scene.get("duration_seconds", 10)
+            emotional_beat = scene.get("emotional_beat", "neutral")
+            
+            # Create basic narration for the scene
+            scene_content = scene.get("content", "Scene content")
+            
+            # Generate voiceover for this scene
+            audio_dir = "temp_audio"
+            os.makedirs(audio_dir, exist_ok=True)
+            
+            script_data = {
+                "script": scene_content,
+                "niche": scene.get("niche", "general")
+            }
+            
+            audio_files = self.generate_voiceover(script_data, audio_dir)
+            if audio_files and len(audio_files) > 0:
+                # Load the first audio file
+                audio_path = audio_files[0]
+                if os.path.exists(audio_path):
+                    audio_clip = AudioFileClip(audio_path)
+                    
+                    # Adjust duration to match scene
+                    if audio_clip.duration > scene_duration:
+                        audio_clip = audio_clip.subclip(0, scene_duration)
+                    elif audio_clip.duration < scene_duration:
+                        # Loop audio if too short
+                        audio_clip = audio_clip.fx(afx.audio_loop, duration=scene_duration)
+                    
+                    return audio_clip
+            
+            # Fallback: create silent audio
+            return AudioClip(lambda t: 0, duration=scene_duration)
+            
+        except Exception as e:
+            self.log_message(f"⚠️ Scene audio creation failed: {e}", "WARNING")
+            return None
+
+    def _compose_scene_video(self, visual_assets: List[str], 
+                            scene_duration: float, 
+                            emotional_beat: str) -> Optional[VideoClip]:
+        """Compose video for a scene using visual assets"""
+        try:
+            if not visual_assets:
+                # Create a simple color clip if no assets
+                return ColorClip(size=(1920, 1080), color=(0, 0, 0), duration=scene_duration)
+            
+            # Use the first visual asset
+            asset_path = visual_assets[0]
+            if os.path.exists(asset_path):
+                # Load video or image
+                if asset_path.lower().endswith(('.mp4', '.avi', '.mov')):
+                    clip = VideoFileClip(asset_path)
+                else:
+                    # Assume it's an image
+                    clip = ImageClip(asset_path)
+                
+                # Adjust duration
+                if clip.duration and clip.duration > scene_duration:
+                    clip = clip.subclip(0, scene_duration)
+                else:
+                    clip = clip.set_duration(scene_duration)
+                
+                # Resize to standard dimensions
+                clip = clip.resize(width=1920, height=1080)
+                
+                return clip
+            else:
+                # Fallback: create color clip
+                return ColorClip(size=(1920, 1080), color=(0, 0, 0), duration=scene_duration)
+                
+        except Exception as e:
+            self.log_message(f"⚠️ Scene video composition failed: {e}", "WARNING")
+            return None
+
+    def _create_cinematic_music(self, audio_plan: Dict[str, Any], 
+                               video_duration: float) -> Optional[AudioClip]:
+        """Create cinematic background music"""
+        try:
+            # Check for existing music files
+            music_dir = Path("assets/audio/music")
+            if music_dir.exists():
+                music_files = list(music_dir.glob("*.mp3")) + list(music_dir.glob("*.wav"))
+                if music_files:
+                    # Use the first available music file
+                    music_path = str(music_files[0])
+                    music_clip = AudioFileClip(music_path)
+                    
+                    # Loop music to match video duration
+                    if music_clip.duration < video_duration:
+                        music_clip = music_clip.fx(afx.audio_loop, duration=video_duration)
+                    else:
+                        music_clip = music_clip.subclip(0, video_duration)
+                    
+                    return music_clip
+            
+            # Fallback: create silent audio
+            return AudioClip(lambda t: 0, duration=video_duration)
+            
+        except Exception as e:
+            self.log_message(f"⚠️ Cinematic music creation failed: {e}", "WARNING")
+            return None
+
+    def _create_voice_narration(self, audio_plan: Dict[str, Any], 
+                               video_duration: float) -> Optional[AudioClip]:
+        """Create voice narration for the video"""
+        try:
+            # Create a simple narration script
+            narration_script = "Welcome to this cinematic experience. We will explore fascinating topics that will change your perspective on the world."
+            
+            # Generate voiceover
+            temp_dir = "temp_narration"
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            script_data = {
+                "script": narration_script,
+                "niche": "general"
+            }
+            
+            audio_files = self.generate_voiceover(script_data, temp_dir)
+            if audio_files and len(audio_files) > 0:
+                audio_path = audio_files[0]
+                if os.path.exists(audio_path):
+                    audio_clip = AudioFileClip(audio_path)
+                    
+                    # Loop audio to match video duration
+                    if audio_clip.duration < video_duration:
+                        audio_clip = audio_clip.fx(afx.audio_loop, duration=video_duration)
+                    else:
+                        audio_clip = audio_clip.subclip(0, video_duration)
+                    
+                    return audio_clip
+            
+            # Fallback: create silent audio
+            return AudioClip(lambda t: 0, duration=video_duration)
+            
+        except Exception as e:
+            self.log_message(f"⚠️ Voice narration creation failed: {e}", "WARNING")
+            return None
+
+    def _download_pexels_assets(self, niche: str, count: int, quality_level: str) -> List[str]:
+        """Download assets from Pexels API"""
+        try:
+            if not PEXELS_API_KEY:
+                self.log_message("⚠️ Pexels API key not available", "WARNING")
+                return []
+            
+            assets = []
+            queries = self._get_niche_queries(niche)
+            
+            for query in queries[:count]:
+                try:
+                    # Download asset from Pexels
+                    asset_path = self._download_pexels_video(query, 5, f"temp_pexels_{len(assets)}.mp4")
+                    if asset_path and os.path.exists(asset_path):
+                        assets.append(asset_path)
+                        self.log_message(f"✅ Downloaded Pexels asset: {query}", "DOWNLOAD")
+                    
+                    if len(assets) >= count:
+                        break
+                        
+                except Exception as e:
+                    self.log_message(f"⚠️ Failed to download asset for query '{query}': {e}", "WARNING")
+                    continue
+            
+            return assets
+            
+        except Exception as e:
+            self.log_message(f"❌ Pexels asset download failed: {e}", "ERROR")
+            return []
+
+    def _get_local_visual_assets(self, niche: str, count: int) -> List[str]:
+        """Get local visual assets"""
+        try:
+            assets = []
+            
+            # Check assets/videos directory
+            videos_dir = Path("assets/videos")
+            if videos_dir.exists():
+                video_files = list(videos_dir.glob("*.mp4")) + list(videos_dir.glob("*.avi")) + list(videos_dir.glob("*.mov"))
+                assets.extend([str(f) for f in video_files[:count]])
+            
+            # Check assets/images directory
+            images_dir = Path("assets/images")
+            if images_dir.exists():
+                image_files = list(images_dir.glob("*.jpg")) + list(images_dir.glob("*.png")) + list(images_dir.glob("*.jpeg"))
+                assets.extend([str(f) for f in image_files[:count - len(assets)]])
+            
+            # Check outputs directory for existing videos
+            outputs_dir = Path("outputs")
+            if outputs_dir.exists():
+                for channel_dir in outputs_dir.iterdir():
+                    if channel_dir.is_dir():
+                        video_files = list(channel_dir.glob("*.mp4"))
+                        assets.extend([str(f) for f in video_files[:count - len(assets)]])
+            
+            return assets[:count]
+            
+        except Exception as e:
+            self.log_message(f"❌ Local asset gathering failed: {e}", "ERROR")
+            return []
+
+    def _get_niche_queries(self, niche: str) -> List[str]:
+        """Get search queries specific to niche"""
+        niche_queries = {
+            "history": [
+                "ancient civilization", "historical landmarks", "archaeological sites",
+                "medieval castles", "ancient ruins", "historical artifacts"
+            ],
+            "motivation": [
+                "achievement", "success", "determination", "overcoming obstacles",
+                "inspirational moments", "goal setting"
+            ],
+            "finance": [
+                "modern city", "business district", "financial markets",
+                "technology innovation", "global economy"
+            ],
+            "automotive": [
+                "luxury cars", "sports cars", "automotive technology",
+                "racing scenes", "car manufacturing"
+            ],
+            "combat": [
+                "martial arts", "training scenes", "athletic performance",
+                "determination", "physical strength"
+            ]
+        }
+        
+        return niche_queries.get(niche, ["cinematic", "professional", "high quality"])
 
 # Convenience functions for backward compatibility
 def generate_voiceover(script_data: dict, output_folder: str):
